@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Layered OAuth Authentication Demo</title>
+    <script src="https://unpkg.com/@descope/web-js-sdk@latest/dist/index.umd.js"></script>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        max-width: 500px;
+        margin: 0 auto;
+        padding: 20px;
+        line-height: 1.6;
+      }
+      .container {
+        border: 1px solid #ddd;
+        padding: 20px;
+        border-radius: 5px;
+        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+      }
+      h1 {
+        text-align: center;
+        color: #333;
+      }
+      .form-group {
+        margin-bottom: 15px;
+      }
+      label {
+        display: block;
+        margin-bottom: 5px;
+        font-weight: bold;
+      }
+      input {
+        width: 100%;
+        padding: 8px;
+        box-sizing: border-box;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+      }
+      button {
+        background-color: #4caf50;
+        color: white;
+        padding: 10px 15px;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        width: 100%;
+        font-size: 16px;
+      }
+      button:hover {
+        background-color: #45a049;
+      }
+      .error {
+        color: red;
+        margin-top: 10px;
+      }
+      .success {
+        color: green;
+        margin-top: 10px;
+      }
+      .hidden {
+        display: none;
+      }
+      #logout-btn {
+        background-color: #f44336;
+        margin-top: 20px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>Layered OAuth Authentication</h1>
+
+      <!-- Step 1: Traditional Login -->
+      <div id="traditional-login">
+        <h2>Step 1: Traditional Login</h2>
+        <div class="form-group">
+          <label for="username">Username:</label>
+          <input type="text" id="username" name="username" required />
+        </div>
+        <div class="form-group">
+          <label for="password">Password:</label>
+          <input type="password" id="password" name="password" required />
+        </div>
+        <button id="login-btn">Login</button>
+        <div id="traditional-error" class="error hidden"></div>
+      </div>
+
+      <div id="loading" class="spinner-container hidden">
+        <div class="spinner"></div>
+      </div>
+
+      <!-- Step 3: Authenticated View -->
+      <div id="authenticated-view" class="hidden">
+        <h2>Authenticated!</h2>
+        <p>You have successfully logged in using:</p>
+        <ul>
+          <li>✔️ Traditional login</li>
+          <li>✔️ OAuth authentication with Descope</li>
+        </ul>
+        <button id="logout-btn">Logout</button>
+      </div>
+    </div>
+
+    <script>
+      const projectId = "P2uE5Re2drGQNjUOqe4mx902JWtz"; // Replace with your actual Descope Project ID
+      const redirectURL = window.location.origin + window.location.pathname; // Redirects back to the same page
+
+      // Initialize Descope SDK
+      const descopeSdk = Descope({
+        projectId: projectId,
+        baseUrl: "https://api.descope.com",
+      });
+
+      // DOM elements
+      const traditionalLogin = document.getElementById("traditional-login");
+      const authenticatedView = document.getElementById("authenticated-view");
+      const loginBtn = document.getElementById("login-btn");
+      const logoutBtn = document.getElementById("logout-btn");
+      const traditionalError = document.getElementById("traditional-error");
+
+      let username = "";
+
+      // Step 1: Traditional login handler
+      loginBtn.addEventListener("click", async () => {
+        username = document.getElementById("username").value;
+        const password = document.getElementById("password").value;
+
+        if (username) {
+          localStorage.setItem("traditionalAuth", "true");
+          localStorage.setItem("username", username);
+          traditionalLogin.classList.add("hidden");
+          loading.classList.remove("hidden");
+        } else {
+          traditionalError.textContent = "Invalid username or password";
+          traditionalError.classList.remove("hidden");
+          return;
+        }
+
+        try {
+          const loginOptions = { scopes: ["openid", "profile", "email"] };
+          const resp = await descopeSdk.oauth.start(
+            "Descope",
+            redirectURL,
+            loginOptions
+          );
+
+          if (resp.ok) {
+            window.location.href = resp.data.url;
+          } else {
+            console.error("OAuth start failed:", resp);
+          }
+        } catch (error) {
+          console.error("Error starting OAuth:", error);
+        }
+      });
+
+      // Step 3: Handle OAuth redirect and token exchange
+      async function handleOAuthRedirect() {
+        const urlParams = new URLSearchParams(window.location.search);
+        const code = urlParams.get("code");
+
+        if (code) {
+          try {
+            const response = await descopeSdk.oauth.exchange(code);
+            console.log("response", response);
+            console.log("response.data.user.email", response.data.user.email);
+            if (
+              response.ok &&
+              response.data.user.email === localStorage.getItem("username")
+            ) {
+              localStorage.setItem("oauthToken", response.data.sessionJwt);
+              authenticatedView.classList.remove("hidden");
+              loading.classList.add("hidden");
+
+              // Clear the code from the URL
+              window.history.replaceState(
+                {},
+                document.title,
+                window.location.pathname
+              );
+            } else {
+              console.error("OAuth exchange failed:", response);
+            }
+          } catch (error) {
+            console.error("Error exchanging OAuth token:", error);
+          }
+        }
+      }
+
+      // Step 4: Logout handler
+      logoutBtn.addEventListener("click", () => {
+        localStorage.clear();
+        authenticatedView.classList.add("hidden");
+        traditionalLogin.classList.remove("hidden");
+      });
+
+      // Auto-check authentication state on page load
+      window.addEventListener("DOMContentLoaded", () => {
+        handleOAuthRedirect();
+        if (
+          localStorage.getItem("traditionalAuth") &&
+          localStorage.getItem("oauthToken")
+        ) {
+          traditionalLogin.classList.add("hidden");
+          loading.classList.add("hidden");
+          authenticatedView.classList.remove("hidden");
+        } else if (localStorage.getItem("traditionalAuth")) {
+          traditionalLogin.classList.add("hidden");
+        }
+      });
+    </script>
+  </body>
+</html>
